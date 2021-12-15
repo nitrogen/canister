@@ -1,6 +1,6 @@
 {application, canister,
- [{description, "An OTP application"},
-  {vsn, "0.1.0"},
+ [{description, "An Session Management tool for web frameworks - originally built for Nitrogen"},
+  {vsn, git},
   {registered, []},
   {mod, {canister_app, []}},
   {applications,
@@ -10,6 +10,9 @@
   {env,[]},
   {modules, []},
 
-  {licenses, ["Apache 2.0"]},
-  {links, []}
- ]}.
+  {licenses, ["MIT"]},
+  {links, [
+	{"GitHub", "https://github.com/nitrogen/canister"},
+	{"Homepage", "https://nitrogenproject.com"}
+  ]}
+]}.

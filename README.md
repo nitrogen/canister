@@ -1,9 +1,11 @@
-canister
-=====
+# Canister
 
-An OTP application
+An Erlang Session Management system
 
-Build
------
+Work-in-progress, with the following goals:
 
-    $ rebar3 compile
+* Be be the standard session management system for [Nitrogen](https://nitrogenproject.com)
+* Data Persistence (currently using mnesia)
+* Cluster data replication
+* Automatic self-healing in the event of split brain.  The initial method will be naive: whichever session record was most recently updated will be replicated across nodes.
+* Expired sessions automatically deleted accordingly

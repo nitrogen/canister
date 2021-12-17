@@ -14,6 +14,7 @@
 -define(SERVER, ?MODULE).
 
 start_link() ->
+    canister:start(),
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %% sup_flags() = #{strategy => strategy(),         % optional
@@ -26,13 +27,16 @@ start_link() ->
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
 init([]) ->
-    canister:start(),
     SupFlags = #{
         strategy => one_for_all,
         intensity => 0,
         period => 1
     },
     ChildSpecs = [
+        #{
+            id=>canister_srv,
+            start=>{canister_srv, start_link, []}
+        }
     ],
     {ok, {SupFlags, ChildSpecs}}.
 

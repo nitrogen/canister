@@ -2,6 +2,7 @@
 -include("canister.hrl").
 -include_lib("stdlib/include/qlc.hrl").
 -export([
+    all_sessions/0,
     start/0,
     clear/1,
     delete/1,
@@ -13,7 +14,19 @@
     clear_untouched_sessions/0,
     delete_deleted_sessions/0
 ]).
+-compile(export_all).
 
+
+-define(REMOTE_TIMEOUT, canister_config:remote_timeout()).
+-define(SESSION_TIMEOUT, canister_config:session_timeout()).
+-define(GRACE_PERIOD, canister_config:grace_period()).
+
+all_sessions() ->
+    {atomic, Res} = mnesia:transaction(fun() ->
+        mnesia:all_keys(canister_times)
+    end),
+    Res.
+    %[integerize(S) || S <- Res].
 
 init_tables() ->
     init_table(canister_data, record_info(fields, canister_data)),
@@ -37,7 +50,8 @@ schema() ->
 
 start() ->
     schema(),
-    init_tables().
+    init_tables(),
+    canister_config:summarize().
 
 maybe_wrap_transaction(Fun) ->
     case mnesia:is_transaction() of
@@ -80,8 +94,8 @@ clear(ID) ->
 
 delete(ID) ->
     maybe_wrap_transaction(fun() ->
-        mnesia:delete(canister_data, ID),
-        mnesia:delete(canister_times, ID)
+        mnesia:delete({canister_data, ID}),
+        mnesia:delete({canister_times, ID})
     end).
 
     
@@ -180,8 +194,8 @@ update_access_time(ID) ->
     end).
          
 list_untouched_sessions() ->
-    Timeout = session_timeout(),
-    EffectiveTimeout = Timeout + 20, %% this just gives session management a little 60 minute buffer to be safe (basically to hopefully prevent losing data in the event of a netsplit)
+    Timeout = canister_config:session_timeout(),
+    EffectiveTimeout = Timeout + ?GRACE_PERIOD,
     LastAccessedToExpire = qdate:to_now(qdate:add_minutes(-EffectiveTimeout)),
     Query = fun() ->
         qlc:eval(qlc:q(
@@ -198,10 +212,10 @@ clear_untouched_sessions() ->
     SessionsToSync = lists:filtermap(fun(Sess) ->
         case clear_untouched_session(Sess) of
             ok -> false;
-            {resync, Node} -> {true, Sess, Node}
+            {resync, _Node} -> {true, Sess#canister_times.id}
         end
     end, Sessions),
-    lists:foreach(fun({ID, _}) ->
+    lists:foreach(fun(ID) ->
         resync(ID)
     end, SessionsToSync).
 
@@ -242,9 +256,6 @@ compare_latest_node_access_time(Nodes, ID, LastAccess) ->
             {ok, FinalNode, FinalAccess}
     end.
 
-%% If it takes longer than 2 seconds, that's a problem
--define(REMOTE_TIMEOUT, 2000).
-
 latest_node_access_time(Node, ID) ->
     try erpc:call(Node, ?MODULE, last_access_time, [ID], ?REMOTE_TIMEOUT)
     catch _:_:_ -> 0
@@ -253,7 +264,7 @@ latest_node_access_time(Node, ID) ->
 
 delete_deleted_sessions() ->
     %% This just makes sure we don't delete sessions that were incorrectly deleted during a netsplit event
-    BeforeTime = qdate:to_now(qdate:add_minutes(-20)),
+    BeforeTime = qdate:to_now(qdate:add_minutes(-?GRACE_PERIOD)),
     Query = fun() ->
         Sessionids = qlc:eval(qlc:q(
             [Rec#canister_times.id || Rec <- mnesia:table(canister_times),
@@ -267,16 +278,25 @@ delete_deleted_sessions() ->
     {atomic, Res} = mnesia:transaction(Query),
     Res.
 
-session_timeout() ->
-    %% Because Nitrogen
-    Apps = [canister, nitrogen_core, nitrogen],
-    session_timeout(Apps).
+integerize(Bin) when is_binary(Bin) ->
+    integerize(binary_to_list(Bin));
+integerize(List) when is_list(List) ->
+    Rev = lists:reverse(List),
+    integerize(Rev, 1).
 
-session_timeout([]) ->
-    20;
-session_timeout([App|T]) ->
-    case application:get_env(App, session_timeout) of
-        X when is_integer(X) -> X;
-        _ -> session_timeout(T)
-    end.
+integerize([H|T], Multiplier) ->
+    H*Multiplier + integerize(T, Multiplier*256);
+integerize([], _) ->
+    0.
 
+deint(X) ->
+    List = deint_(X),
+    list_to_binary(lists:reverse(List)).
+
+deint_(0) ->
+    [];
+deint_(X) ->
+    Next = X div 256,
+    Rem = X rem 256,
+    [Rem | deint_(Next)].
+    

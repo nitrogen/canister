@@ -9,6 +9,7 @@
     get/2,
     put/3,
     touch/1,
+    touch/2,
     last_update_time/1,
     last_access_time/1,
     clear_untouched_sessions/0,
@@ -79,13 +80,17 @@ read(Table, ID) ->
     end.
 
 clear(ID) ->
+    Time = os:timestamp(),
+    clear(ID, Time),
+    canister_sync:send_clear(ID).
+
+clear(ID, Time) ->
     maybe_wrap_transaction(fun() ->
         case read(canister_data, ID) of
             #canister_data{} ->
                 C = #canister_data{id=ID},
                 write(C),
-                update_delete_time(ID),
-                queue_delete(ID),
+                update_delete_time(ID, Time),
                 ok;
             _ ->
                 ok
@@ -128,45 +133,56 @@ put(ID, Key, Value) ->
         NewData = maps:put(Key, Value, Rec#canister_data.data),
         NewRec = Rec#canister_data{data=NewData},
         write(NewRec),
-        update_update_time(ID),
-        queue_update(ID),
+        Time = update_update_time(ID),
+        canister_sync:send_update(ID, NewData, Time),
         Prev
     end).
 
+%% This is coming from remote data
+update(ID, Data, Time) ->
+    maybe_wrap_transaction(fun() ->
+        DataRec = #canister_data{id=ID, data=Data},
+        write(DataRec),
+        update_update_time(ID, Time)
+    end).
+
 touch(ID) ->
-    update_access_time(ID),
-    queue_touch(ID).
+    Time = update_access_time(ID),
+    canister_sync:queue_touch(ID, Time).
 
-queue_delete(ID) ->
-    ok.
+touch(ID, Time) ->
+    update_access_time(ID, Time).
 
-queue_update(ID) ->
-    ok.
-
-queue_touch(ID) ->
-    ok.
+queue_delete(ID, Time) ->
+    canister_sync:send_delete(ID, Time).
 
 resync(ID) ->
     ok.
 
 update_update_time(ID) ->
-    Now = os:timestamp(),
+    update_update_time(ID, os:timestamp()).
+
+update_update_time(ID, Time) ->
     Rec = #canister_times{
         id=ID,
-        last_access=Now,
-        last_update=Now
+        last_access=Time,
+        last_update=Time
     },
-    write(Rec).
+    write(Rec),
+    Time.
 
 update_delete_time(ID) ->
-    Now = os:timestamp(),
+    update_delete_time(ID, os:timestamp()).
+
+update_delete_time(ID, Time) ->
     Rec = #canister_times{
         id=ID,
         last_access=undefined,
         last_update=undefined,
-        deleted=Now
+        deleted=Time
     },
-    write(Rec).
+    write(Rec),
+    Time.
 
 
 last_access_time(ID) ->
@@ -181,13 +197,16 @@ last_update_time(ID) ->
         undefined -> undefined
     end.
 
-
 update_access_time(ID) ->
+    update_access_time(ID, os:timestamp()).
+
+update_access_time(ID, Time) ->
     maybe_wrap_transaction(fun() ->
         case read(canister_times, ID) of
             T = #canister_times{} ->
-                New = T#canister_times{last_access=os:timestamp()},
-                write(New);
+                New = T#canister_times{last_access=Time},
+                write(New),
+                Time;
             undefined ->
                 ok
         end
@@ -229,7 +248,7 @@ clear_untouched_session({ID, LastAccess}) ->
     end.
 
 latest_cluster_access_time(ID, LastAccess) ->
-    case nodes() of
+    case canister_sync:get_nodes() of
         [] -> ok;
         Nodes ->
             case compare_latest_node_access_time(Nodes, ID, LastAccess) of

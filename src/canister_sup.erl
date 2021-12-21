@@ -34,8 +34,12 @@ init([]) ->
     },
     ChildSpecs = [
         #{
-            id=>canister_srv,
-            start=>{canister_srv, start_link, []}
+            id=>canister_exp,
+            start=>{canister_exp, start_link, []}
+        },
+        #{
+            id=>canister_sync,
+            start=>{canister_sync, start_link, []}
         }
     ],
     {ok, {SupFlags, ChildSpecs}}.

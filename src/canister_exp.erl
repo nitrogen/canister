@@ -1,4 +1,4 @@
--module(canister_srv).
+-module(canister_exp).
 
 -behaviour(gen_server).
 

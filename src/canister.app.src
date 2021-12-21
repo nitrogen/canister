@@ -5,7 +5,8 @@
   {mod, {canister_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    qdate
    ]},
   {env,[]},
   {modules, []},

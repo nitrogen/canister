@@ -11,9 +11,10 @@
     interval_jitter/0,
     interval_jitter/1,
     remote_timeout/0,
-    remote_timeout/1
+    remote_timeout/1,
+    node_interval/0,
+    node_interval/1
 ]).
-
 
 summarize() ->
     Fields = [
@@ -21,7 +22,8 @@ summarize() ->
         {grace_period, "Session Deletion Grace Period", "minutes"},
         {clear_interval, "Session Clear Interval", "minutes"},
         {interval_jitter, "Session Intentional Jitter", "minutes"},
-        {remote_timeout, "Cluster Remote Timeout", "milliseconds"}
+        {remote_timeout, "Cluster Remote Timeout", "milliseconds"},
+        {node_interval, "Refresh Node List Interval", "seconds"}
     ],
 
     Msgs = [format_config(Field) || Field <- Fields],
@@ -67,6 +69,11 @@ remote_timeout() ->
 remote_timeout(New) ->
     set_var(?FUNCTION_NAME, New).
 
+node_interval() ->
+    get_var(?FUNCTION_NAME, 20).
+
+node_interval(New) ->
+    get_var(?FUNCTION_NAME, New).
 
 
 get_var(Field, Default) ->

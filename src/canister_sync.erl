@@ -26,7 +26,7 @@
 -define(REMOTE_TIMEOUT, canister_config:remote_timeout()).
 -define(NODE_INTERVAL, canister_config:node_interval() * 1000).
 
--record(state, {nodes=[]}).
+-record(state, {nodes=[], main_resync_node}).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -52,8 +52,12 @@ init([]) ->
     auto_connect_nodes(),
     timer:send_after(1, ?SERVER, refresh_nodes),
     timer:send_interval(?NODE_INTERVAL, ?SERVER, refresh_nodes),
+    net_kernel:monitor_nodes(true),
     {ok, #state{nodes=[]}}.
 
+handle_call(uptime, _From, State) ->
+    {Time, _} = erlang:statistics(wall_clock),
+    {reply, Time, State};
 handle_call(get_nodes, _From, State=#state{nodes=Nodes}) ->
     {reply, {ok, Nodes}, State};
 handle_call(are_you_there, _From, State) ->
@@ -70,14 +74,24 @@ handle_call({last_update_time, ID}, _From, State) ->
 handle_call({deleted_time, ID}, _From, State) ->
     Val = canister:deleted_time(ID),
     {reply, {ok, Val}, State};
+handle_call({get_local, ID, Key}, _From, State) ->
+    Val = canister:get_local(ID, Key),
+    {reply, Val, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
 handle_cast({update_nodes, NewNodes}, State = #state{nodes=OldNodes}) ->
-    NewState = State#state{nodes=NewNodes},
+    State2 = State#state{nodes=NewNodes},
     canister_log:info("Nodes Updated: ~p => ~p",[OldNodes, NewNodes]),
-    {noreply, NewState};
+    case NewNodes -- OldNodes of
+        [] ->
+            canister_log:info("No resync necessary. Node change was only from nodes going offline.");
+        NewlyUp ->
+            canister_log:info("New node(s) were added (~p), scheduling a full resync in about 15 seconds", [NewlyUp]),
+            timer:send_after(15000, full_resync)
+    end,
+    {noreply, State2};
 handle_cast({cast, Msg}, State = #state{nodes=Nodes}) ->
     erlang:spawn(fun() ->
         cast_to_nodes(Nodes, Msg)
@@ -86,11 +100,29 @@ handle_cast({cast, Msg}, State = #state{nodes=Nodes}) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info({nodeup, _Node}, State) ->
+    handle_info(refresh_nodes, State);
+handle_info({nodedown, _Node}, State) ->
+    handle_info(refresh_nodes, State);
 handle_info(refresh_nodes, State = #state{nodes=Nodes}) ->
     erlang:spawn(fun() ->
         refresh_nodes(Nodes)
     end),
+    {noreply, State};
+handle_info(full_resync, State = #state{nodes=[]}) ->
+    %% no nodes in cluster, nothing to do
+    {noreply, State};
+handle_info(full_resync, State = #state{nodes=Nodes}) ->
+    List = lists:sort([node() | Nodes]),
+    Node = hd(List),
+    erlang:spawn(fun() ->
+        assemble_and_requeue(List)
+    end),
+    {noreply, State};
+handle_info(_, State) ->
     {noreply, State}.
+    
+
 
 terminate(_Reason, _State) ->
     ok.
@@ -106,11 +138,25 @@ handle_remote({update, ID, Data, Time}) ->
     canister:update(ID, Data, Time),
     ok;
 handle_remote({touch, ID, Time}) ->
-    canister:local_touch(ID, Time),
+    canister:touch_local(ID, Time),
     ok;
 handle_remote({clear, ID, Time}) ->
     canister:clear(ID, Time),
     ok.
+
+assemble_and_requeue(Nodes) ->
+    MainNode = hd(Nodes),
+    IDSet = lists:foldl(fun(Node, Acc) ->
+        try erpc:call(Node, canister, all_sessions, [], ?REMOTE_TIMEOUT) of
+            NewIDs ->
+                sets:union(Acc, sets:from_list(NewIDs))
+            catch _:_ ->
+                Acc
+        end
+    end, sets:new(), Nodes),
+    IDs = sets:to_list(IDSet),
+    canister_resync:add_many(IDs).
+
 
 cast_to_nodes(Nodes, Msg) ->
     ec_plists:foreach(fun(Node) ->

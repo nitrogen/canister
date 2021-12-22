@@ -147,6 +147,22 @@ data_get(Key, Data) ->
     end.
 
 get(ID, Key) ->
+    case get_local(ID, Key) of
+        undefined ->
+            case get_remote(ID, Key) of
+                undefined -> undefined;
+                V ->
+                    resync(ID),
+                    V
+            end;
+        V ->
+            V
+    end.
+
+resync(ID) ->
+    canister_resync:add(ID).
+
+get_local(ID, Key) ->
     case read(canister_data, ID) of
         #canister_data{data=Data} ->
             touch(ID),
@@ -155,6 +171,23 @@ get(ID, Key) ->
             undefined
     end.
     
+get_remote(ID, Key) ->  
+    Nodes = canister_sync:get_nodes(),
+    get_remote(Nodes, ID, Key).
+
+get_remote([], _, _) ->
+    undefined;
+get_remote([Node|Rest], ID, Key) ->
+    Val = try gen_server:call({canister_sync, Node}, {get_local, ID, Key}, ?REMOTE_TIMEOUT)
+          catch _:_ -> undefined
+          end,
+    case Val of
+        undefined ->
+            get_remote(Rest, ID, Key);
+        _ ->
+            Val
+    end.
+
 put(ID, Key, Value) ->
     maybe_wrap_transaction(fun() ->
         Rec = case read(canister_data, ID) of
@@ -197,41 +230,6 @@ touch_local(ID, Time) ->
 queue_delete(ID, Time) ->
     canister_sync:send_delete(ID, Time).
 
-resync(ID) ->
-    case canister_sync:get_nodes() of
-        [] ->
-            ok;
-        Nodes ->
-            {StartStatus, StartMTime, StartATime} = record_status(ID),
-            Me = self(),
-            {FinalNode, FinalStatus, FinalMTime, FinalATime} = lists:foldl(fun(Node, {BestNode, BestStatus, BestMTime, BestATime}) ->
-                {NewStatus, NewMTime, NewATime} = remote_record_status(Node, ID),
-                NewBestATime = lists:max([NewATime, BestATime]),
-                case NewMTime > BestMTime of
-                    true -> {Node, NewStatus, NewMTime, NewBestATime};
-                    false -> {BestNode, BestStatus, BestMTime, NewBestATime}
-                end
-            end, {Me, StartStatus, StartMTime, StartATime}, Nodes),
-            case FinalStatus of
-                deleted ->
-                    canister_sync:send_clear(ID, FinalMTime);
-                updated ->
-                    case FinalNode of
-                        Me ->
-                            canister_sync:send_update(ID, FinalMTime);
-                        _ ->
-                            erpc:call(FinalNode, canister_sync, send_update, [ID, FinalMTime])
-                    end,
-                    touch(ID, FinalATime)
-            end
-    end.
-
-remote_record_status(Node, ID) ->
-    %% This needs to be optimized to call gen_server:call(something)
-    try erpc:call(Node, canister, record_status, [ID], ?REMOTE_TIMEOUT)
-    catch _:_ -> {undefined, 0}
-    end.
-
 record_status(ID) ->
     case deleted_time(ID) of
         undefined ->
@@ -253,7 +251,8 @@ update_update_time(ID, Time) ->
     Rec = #canister_times{
         id=ID,
         last_access=Time,
-        last_update=Time
+        last_update=Time,
+        deleted=undefined
     },
     write(Rec),
     Time.

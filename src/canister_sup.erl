@@ -40,6 +40,10 @@ init([]) ->
         #{
             id=>canister_sync,
             start=>{canister_sync, start_link, []}
+        },
+        #{
+            id=>canister_resync,
+            start=>{canister_resync, start_link, []}
         }
     ],
     {ok, {SupFlags, ChildSpecs}}.

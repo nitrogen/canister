@@ -22,7 +22,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, TRef} = schedule_next_cleaning(),
+    {ok, TRef} = schedule_first_cleaning(),
+    canister_log:info("Starting Expiration Server"),
     {ok, #state{timer_ref=TRef}}.
 
 handle_call(_Request, _From, State) ->
@@ -33,8 +34,8 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(clean, State=#state{last_clean=LastClean}) ->
-    error_logger:info_msg("Last Cleaning: ~s", [draw_last_time(LastClean)]),
-    erlang:cancel_timer(State#state.timer_ref),
+    canister_log:info("Last Cleaning: ~s", [draw_last_time(LastClean)]),
+    %erlang:cancel_timer(State#state.timer_ref),
     do_cleaning(),
     {ok, TRef} = schedule_next_cleaning(),
     {noreply, State#state{timer_ref=TRef, last_clean=os:timestamp()}};
@@ -58,11 +59,15 @@ draw_last_time(LastClean) ->
 
 do_cleaning() ->
     %% Delete the old sessions that have been deleted
-    canister:delete_deleted_sessions(),
+    DeletedSessions = canister:delete_deleted_sessions(),
+    canister_log:info("Sessions deleted: ~p",[DeletedSessions]),
     %% Clean sessions that haven't been touched
-    canister:clear_untouched_sessions().
+    ClearedSessions = canister:clear_untouched_sessions(),
+    canister_log:info("Sessions cleared pending deletion: ~p",[ClearedSessions]).
 
 
+schedule_first_cleaning() ->
+    timer:send_after(5000, clean).
 
 schedule_next_cleaning() ->
     Interval = canister_config:clear_interval(),

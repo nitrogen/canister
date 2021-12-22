@@ -13,7 +13,8 @@
     remote_timeout/0,
     remote_timeout/1,
     node_interval/0,
-    node_interval/1
+    node_interval/1,
+    default_cluster/0
 ]).
 
 summarize() ->
@@ -27,11 +28,20 @@ summarize() ->
     ],
 
     Msgs = [format_config(Field) || Field <- Fields],
+    Nodes = default_cluster(),
+    ClusterMsg = format_cluster(Nodes),
     Msg = [
         "Nitrogen Canister Session Manager Configuration:\n",
+        ClusterMsg,
         Msgs
     ],
     io:format(Msg).
+
+format_cluster([]) ->
+    "*** Canister: No auto-connected cluster nodes (default_cluster) configured. You'll have to manually connect nodes (net_kernel:connect_node(Node))\n";
+format_cluster(Nodes) ->
+    io_lib:format("*** Canister: Default auto-connected cluster nodes (default_cluster): ~p~n",[Nodes]).
+
 
 format_config({Field, Label, Units}) ->
     Val = ?MODULE:Field(),
@@ -75,6 +85,8 @@ node_interval() ->
 node_interval(New) ->
     get_var(?FUNCTION_NAME, New).
 
+default_cluster() ->
+    get_var(?FUNCTION_NAME, []).
 
 get_var(Field, Default) ->
     get_var([canister], Field, Default).
@@ -83,8 +95,8 @@ get_var([], _Field, Default) ->
     Default;
 get_var([App|Apps], Field, Default) ->
     case application:get_env(App, Field) of
-        X when is_integer(X) -> X;
-        _ -> get_var(Apps, Field, Default)
+        undefined -> get_var(Apps, Field, Default);
+        {ok, X} -> X
     end.
 
 set_var(Field, Value) ->

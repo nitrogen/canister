@@ -3,15 +3,20 @@
 -include_lib("stdlib/include/qlc.hrl").
 -export([
     all_sessions/0,
+    session_info/1,
     start/0,
     clear/1,
     delete/1,
     get/2,
+    get_data/1,
     put/3,
     touch/1,
     touch/2,
+    touch_local/1,
+    touch_local/2,
     last_update_time/1,
     last_access_time/1,
+    deleted_time/1,
     clear_untouched_sessions/0,
     delete_deleted_sessions/0
 ]).
@@ -63,6 +68,31 @@ maybe_wrap_transaction(Fun) ->
             Res
     end.
 
+
+session_info(ID) ->
+    case read(canister_data, ID) of
+        #canister_data{data=Data} ->
+            Times = read(canister_times, ID),
+            #canister_times{
+                last_access=Access,
+                last_update=Update,
+                deleted=Deleted
+            } = Times,
+            #{
+                access=>format_date(Access),
+                update=>format_date(Update),
+                deleted=>format_date(Deleted),
+                data=>Data
+            };
+        _ ->
+            undefined
+    end.
+
+format_date(Date) ->
+    try qdate:to_string("Y-m-d g:i:sa T", Date)
+    catch _:_ -> undefined
+    end.
+
 write(Rec) ->
     case mnesia:is_transaction() of
         true -> mnesia:write(Rec);
@@ -82,7 +112,7 @@ read(Table, ID) ->
 clear(ID) ->
     Time = os:timestamp(),
     clear(ID, Time),
-    canister_sync:send_clear(ID).
+    canister_sync:send_clear(ID, Time).
 
 clear(ID, Time) ->
     maybe_wrap_transaction(fun() ->
@@ -104,6 +134,11 @@ delete(ID) ->
     end).
 
     
+get_data(ID) ->
+    case read(canister_data, ID) of
+        #canister_data{data=Data} -> Data;
+        _ -> #{}
+    end.
 
 data_get(Key, Data) ->
     case maps:find(Key, Data) of
@@ -114,7 +149,7 @@ data_get(Key, Data) ->
 get(ID, Key) ->
     case read(canister_data, ID) of
         #canister_data{data=Data} ->
-            touch(Key),
+            touch(ID),
             data_get(Key, Data);
         _ ->
             undefined
@@ -147,17 +182,69 @@ update(ID, Data, Time) ->
     end).
 
 touch(ID) ->
-    Time = update_access_time(ID),
-    canister_sync:queue_touch(ID, Time).
+    touch(ID, os:timestamp()).
 
 touch(ID, Time) ->
+    touch_local(ID, Time),
+    canister_sync:send_touch(ID, Time).
+
+touch_local(ID) ->
+    touch_local(ID, os:timestamp()).
+
+touch_local(ID, Time) ->
     update_access_time(ID, Time).
 
 queue_delete(ID, Time) ->
     canister_sync:send_delete(ID, Time).
 
 resync(ID) ->
-    ok.
+    case canister_sync:get_nodes() of
+        [] ->
+            ok;
+        Nodes ->
+            {StartStatus, StartMTime, StartATime} = record_status(ID),
+            Me = self(),
+            {FinalNode, FinalStatus, FinalMTime, FinalATime} = lists:foldl(fun(Node, {BestNode, BestStatus, BestMTime, BestATime}) ->
+                {NewStatus, NewMTime, NewATime} = remote_record_status(Node, ID),
+                NewBestATime = lists:max([NewATime, BestATime]),
+                case NewMTime > BestMTime of
+                    true -> {Node, NewStatus, NewMTime, NewBestATime};
+                    false -> {BestNode, BestStatus, BestMTime, NewBestATime}
+                end
+            end, {Me, StartStatus, StartMTime, StartATime}, Nodes),
+            case FinalStatus of
+                deleted ->
+                    canister_sync:send_clear(ID, FinalMTime);
+                updated ->
+                    case FinalNode of
+                        Me ->
+                            canister_sync:send_update(ID, FinalMTime);
+                        _ ->
+                            erpc:call(FinalNode, canister_sync, send_update, [ID, FinalMTime])
+                    end,
+                    touch(ID, FinalATime)
+            end
+    end.
+
+remote_record_status(Node, ID) ->
+    %% This needs to be optimized to call gen_server:call(something)
+    try erpc:call(Node, canister, record_status, [ID], ?REMOTE_TIMEOUT)
+    catch _:_ -> {undefined, 0}
+    end.
+
+record_status(ID) ->
+    case deleted_time(ID) of
+        undefined ->
+            case last_update_time(ID) of
+                undefined -> {undefined, 0, 0};
+                UpdateTime ->
+                    AccessTime = last_access_time(ID),
+                    {updated, UpdateTime, AccessTime}
+            end;
+        Time ->
+        {deleted, Time, 0}
+    end.
+            
 
 update_update_time(ID) ->
     update_update_time(ID, os:timestamp()).
@@ -187,13 +274,19 @@ update_delete_time(ID, Time) ->
 
 last_access_time(ID) ->
     case read(canister_times, ID) of
-        T = #canister_times{last_access=T} -> T;
+        #canister_times{last_access=T} -> T;
         undefined -> undefined
     end.
 
 last_update_time(ID) ->
     case read(canister_times, ID) of
-        T = #canister_times{last_update=T} -> T;
+        #canister_times{last_update=T} -> T;
+        undefined -> undefined
+    end.
+
+deleted_time(ID) ->
+    case read(canister_times, ID) of
+        #canister_times{deleted=T} -> T;
         undefined -> undefined
     end.
 
@@ -219,6 +312,7 @@ list_untouched_sessions() ->
     Query = fun() ->
         qlc:eval(qlc:q(
             [{Rec#canister_times.id, Rec#canister_times.last_access} || Rec <- mnesia:table(canister_times),
+                                             Rec#canister_times.deleted==undefined,
                                              Rec#canister_times.last_access < LastAccessedToExpire]
         ))
     end,
@@ -236,7 +330,8 @@ clear_untouched_sessions() ->
     end, Sessions),
     lists:foreach(fun(ID) ->
         resync(ID)
-    end, SessionsToSync).
+    end, SessionsToSync),
+    length(Sessions) - length(SessionsToSync).
 
 
 clear_untouched_session({ID, LastAccess}) ->
@@ -248,21 +343,41 @@ clear_untouched_session({ID, LastAccess}) ->
     end.
 
 latest_cluster_access_time(ID, LastAccess) ->
+    latest_cluster_time(access, ID, LastAccess).
+
+latest_cluster_update_time(ID) ->
+    Time = last_update_time(ID),
+    latest_cluster_update_time(ID, Time).
+
+latest_cluster_update_time(ID, Time) ->
+    latest_cluster_time(update, ID, Time).
+
+latest_cluster_deleted_time(ID) ->
+    Time = deleted_time(ID),
+    latest_cluster_deleted_time(ID, Time).
+
+latest_cluster_deleted_time(ID, Time) ->
+    latest_cluster_time(delete, ID, Time).
+
+
+latest_cluster_time(Type, ID, LastAccess) ->
     case canister_sync:get_nodes() of
         [] -> ok;
         Nodes ->
-            case compare_latest_node_access_time(Nodes, ID, LastAccess) of
-                undefined ->
+            case compare_latest_node_time(Nodes, Type, ID, LastAccess) of
+                ok ->
                     ok;
                 {Node, NewLastAccess} ->
                     {ok, NewLastAccess, Node}
             end
     end.
 
-compare_latest_node_access_time(Nodes, ID, LastAccess) ->
+compare_latest_node_time(Nodes, Type, ID, LastAccess) ->
     Me = node(),
+    %% TODO: This needs to be reworked to just send X messages and receive X messages and compare results.
+    %% As written, this will be quite slow
     {FinalNode, FinalAccess} = lists:foldl(fun(Node, {BestNode, BestAccess}) ->
-        NodeLatest = latest_node_access_time(Node, ID),
+        NodeLatest = latest_node_time(Node, Type, ID),
         case NodeLatest > BestAccess of
             true -> {Node, NodeLatest};
             false -> {BestNode, BestAccess}
@@ -275,11 +390,18 @@ compare_latest_node_access_time(Nodes, ID, LastAccess) ->
             {ok, FinalNode, FinalAccess}
     end.
 
-latest_node_access_time(Node, ID) ->
-    try erpc:call(Node, ?MODULE, last_access_time, [ID], ?REMOTE_TIMEOUT)
-    catch _:_:_ -> 0
+latest_node_time(Node, Type, ID) ->
+    FunctionName = case Type of
+        access -> last_access_time;
+        update -> last_update_time;
+        delete -> deleted_time
+    end,
+    try gen_server:call({canister_sync, Node}, {FunctionName, ID}, ?REMOTE_TIMEOUT) of
+        {ok, undefined} -> 0;
+        {ok, Val} -> Val;
+        _ -> 0
+    catch _:_ -> 0
     end.
-
 
 delete_deleted_sessions() ->
     %% This just makes sure we don't delete sessions that were incorrectly deleted during a netsplit event
@@ -292,7 +414,8 @@ delete_deleted_sessions() ->
         )),
         lists:foreach(fun(Sessid) ->
             delete(Sessid)
-        end, Sessionids)
+        end, Sessionids),
+        length(Sessionids)
     end,
     {atomic, Res} = mnesia:transaction(Query),
     Res.

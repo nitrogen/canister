@@ -43,7 +43,7 @@ init_table(Table, Fields) ->
         {disc_copies, [node()]},
         {attributes, Fields}
     ]),
-    error_logger:info_msg("Initializing Canister Table: ~p: ~p",[Table, Res]),
+    canister_log:info("Initializing Table: ~p: ~p",[Table, Res]),
     Res.
 
 schema() ->

@@ -103,7 +103,7 @@ resync_loop(LastStatus) ->
             timer:sleep(1000),
             empty;
         {ok, ID} ->
-            canister_log:info("Resyncing: ~p",[ID]),
+            canister_log:debug("Resyncing: ~p",[ID]),
             resync_worker(ID),
             running
     end,
@@ -143,5 +143,5 @@ resync_worker(ID) ->
 remote_record_status(Node, ID) ->
     %% This needs to be optimized to call gen_server:call(something)
     try erpc:call(Node, canister, record_status, [ID], ?REMOTE_TIMEOUT)
-    catch _:_ -> {undefined, 0}
+    catch _:_ -> {undefined, 0, 0}
     end.

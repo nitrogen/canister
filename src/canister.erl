@@ -3,11 +3,13 @@
 -include_lib("stdlib/include/qlc.hrl").
 -export([
     all_sessions/0,
+    num_local_sessions/0,
     session_info/1,
     start/0,
     clear/1,
     delete/1,
     get/2,
+    get_local/2,
     get_data/1,
     put/3,
     touch/1,
@@ -33,6 +35,10 @@ all_sessions() ->
     end),
     Res.
     %[integerize(S) || S <- Res].
+
+num_local_sessions() ->
+    length(all_sessions()).
+    %-dfgdfgdfmnesia:table_info(canister_times, size).
 
 init_tables() ->
     init_table(canister_data, record_info(fields, canister_data)),
@@ -178,7 +184,7 @@ get_remote(ID, Key) ->
 get_remote([], _, _) ->
     undefined;
 get_remote([Node|Rest], ID, Key) ->
-    Val = try gen_server:call({canister_sync, Node}, {get_local, ID, Key}, ?REMOTE_TIMEOUT)
+    Val = try erpc:call(Node, canister, get_local, [ID, Key], ?REMOTE_TIMEOUT) %try gen_server:call({canister_sync, Node}, {get_local, ID, Key}, ?REMOTE_TIMEOUT)
           catch _:_ -> undefined
           end,
     case Val of

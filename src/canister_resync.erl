@@ -7,6 +7,9 @@
     start_link/0,
     add/1,
     add_many/1,
+    add_many/2,
+    is_resyncing/1,
+    is_resyncing/0,
     resync_loop/1
 ]).
 
@@ -26,6 +29,16 @@
 add(ID) ->
     gen_server:cast(?SERVER, {in, ID}).
 
+is_resyncing(Node) ->
+    gen_server:call({?SERVER, Node}, is_resyncing).
+
+is_resyncing() ->
+    gen_server:call(?SERVER, is_resyncing).
+
+add_many(Node, IDs) ->
+    canister_log:info("Adding ~p sessions to resync to be processed on ~p",[length(IDs), Node]),
+    gen_server:cast({?SERVER, Node}, {in_many, IDs}).
+
 add_many(IDs) when is_list(IDs) ->
     canister_log:info("Adding ~p sessions to resync", [length(IDs)]),
     gen_server:cast(?SERVER, {in_many, IDs}).
@@ -37,7 +50,13 @@ init([]) ->
     ResyncPid = start_resync_loop(),
     {ok, #state{resync_pid=ResyncPid, queue=queue:new()}}.
 
-handle_call(out, _From, State = #state{resync_pid=Pid, queue=Q}) ->
+handle_call(is_resyncing, _From, State=#state{resync_pid=Pid}) ->
+    Response = is_process_alive(Pid),
+    {reply, Response, State};
+handle_call({is_queued, ID}, _From, State=#state{queue=Q}) ->
+    IsQueued = queue:member(ID, Q),
+    {reply, IsQueued, State};
+handle_call(out, _From, State = #state{resync_pid=_Pid, queue=Q}) ->
     case queue:out(Q) of
         {empty, _} ->
             {reply, empty, State};
@@ -57,8 +76,12 @@ handle_cast({in, ID}, State = #state{queue=Q}) ->
             {noreply, NewState}
     end;
 handle_cast({in_many, IDs}, State = #state{queue=Q}) ->
-    NewIDsQ = queue:from_list(IDs),
-    NewQ = queue:join(NewIDsQ, Q),
+    NewQ = lists:foldl(fun(ID, Acc) ->
+        case queue:member(ID, Acc) of
+            true -> Acc;
+            false -> queue:in(ID, Acc)
+        end
+    end, Q, IDs),
     NewState = State#state{queue=NewQ},
     {noreply, NewState};
 handle_cast(_Msg, State) ->

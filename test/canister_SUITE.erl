@@ -10,15 +10,21 @@
 ]).
 
 -export([
-    basic_crud/1
+    basic_crud/1,
+    add_one_node/1,
+    add_three_nodes/1,
+    no_session/1,
+    no_key/1
 ]).
 
 
-start_nodes(1) ->
+start_nodes(NumNodes) ->
+    [start_node(Num) || Num <- lists:seq(1, NumNodes)].
+
+start_node(1) ->
     application:ensure_all_started(canister),
-    [node()];
-start_nodes(Num) when Num > 1 ->
-    %% A bunch of this copied from https://github.com/ostinelli/ram/blob/main/test/ram_test_suite_helper.erl
+    node();
+start_node(Num) ->
     Name = list_to_atom("can_" ++ integer_to_list(Num) ++ "@127.0.0.1"),
     Node = Name,
     ct_slave:start(Name, [
@@ -34,9 +40,12 @@ start_nodes(Num) when Num > 1 ->
     true = rpc:call(Node, code, set_path, [CodePath]),
 
     {ok, _} = erpc:call(Node, application, ensure_all_started, [canister]),
+    Node.
 
-    [Name | start_nodes(Num-1)].
-
+start_unconnected(Num) ->
+    Node = start_unconnected(Num),
+    erlang:disconnect_node(Node),
+    Node.
 
 kill_nodes([]) ->
     [];
@@ -44,6 +53,10 @@ kill_nodes([H|T]) when H=/=node() ->
     {ok, _} = ct_slave:stop(H),
     kill_nodes(T);
 kill_nodes([H|T]) when H==node() ->
+    %mnesia:delete_table(canister
+    application:stop(canister),
+    %stopped = mnesia:stop(),
+    %mnesia:delete_schema(canister),
     kill_nodes(T).
 
 
@@ -60,13 +73,13 @@ all() ->
 groups() ->
     [
         {'1',
-            [shuffle], [basic_crud]
+            [shuffle], [no_session, no_key, basic_crud]
         },
         {'2',
-            [shuffle], [basic_crud]
+            [shuffle], [basic_crud, add_one_node, no_session, no_key]
         },
         {'4',
-            [shuffle], [basic_crud]
+            [shuffle], [basic_crud, add_three_nodes]
         }
     ].
 
@@ -78,21 +91,68 @@ init_per_group(Group, Config) ->
     error_logger:info_msg("Master Node: ~p",[node()]),
     NumNodes = group_to_num(Group),
     Nodes = start_nodes(NumNodes),
-    error_logger:info_msg("Sleeping for about 30 few seconds to allow the newly spawned servers to normalize, resync, etc"),
-    timer:sleep(30000),
+    sleep_and_show_sync_status(Nodes, 1, 30),
     [{nodes, Nodes} | Config].
 
 end_per_group(_Group, Config) ->
-    Nodes = proplists:get_value(nodes, Config),
+    Nodes = nodes() ++ [node()], %proplists:get_value(nodes, Config),
     kill_nodes(Nodes),
     Config.
 
+no_session(_Config) ->
+    ID = crypto:strong_rand_bytes(50),
+    Key = crypto:strong_rand_bytes(50),
+    undefined = canister:get(ID, Key).
+
+no_key(_Config) ->
+    Sessions = rand_sessions(1),
+    ok = store_sessions(Sessions),
+    [{ID, _}] = Sessions,
+    Key = crypto:strong_rand_bytes(50),
+    undefined = canister:get(ID, Key).
+
 basic_crud(Config) ->
     Sessions = rand_sessions(),
-    error_logger:info_msg("Generated ~p Sessions",[length(Sessions)]),
+    io:format("Generated ~p Sessions~n",[length(Sessions)]),
     ok = store_sessions(Sessions),
     Nodes = proplists:get_value(nodes, Config),
-    ok = check_sessions(Nodes, Sessions).
+    print_local_sessions(Nodes),
+    ok = check_sessions_dist(Nodes, Sessions),
+    ok = check_sessions_local(Nodes, Sessions).
+
+add_one_node(Config) ->
+    add_x_nodes(1, Config).
+
+add_three_nodes(Config) ->
+    add_x_nodes(3, Config).
+
+add_x_nodes(Num, Config) ->
+    Sessions = rand_sessions(),
+    ok = store_sessions(Sessions),
+    Nodes = proplists:get_value(nodes, Config),
+    NewNodes = add_new_nodes(Num),
+    Nodes2 = Nodes ++ NewNodes,
+    sleep_and_show_sync_status(Nodes2, 1, 30*Num),
+    ok = check_sessions_local(Nodes2, Sessions).
+
+sleep_and_show_sync_status(Nodes, Secs, Times) ->
+    print_local_sessions(Nodes),
+    lists:foreach(fun(X) ->
+        io:format("Sleeping ~ps (~p/~p)~n",[Secs, X, Times]),
+        timer:sleep(Secs * 1000),
+        print_local_sessions(Nodes)
+    end, lists:seq(1, Times)).
+
+        
+
+print_local_sessions(Nodes) ->
+    lists:foreach(fun(Node) ->
+        N = erpc:call(Node, canister, num_local_sessions, []),
+        io:format("Number of Local Session on ~p: ~p~n",[Node, N])
+    end, Nodes).
+
+add_new_nodes(NumNodes) ->
+    [start_node(Num+100) || Num <- lists:seq(1, NumNodes)].
 
 
 store_sessions([]) ->
@@ -103,22 +163,47 @@ store_sessions([{ID, KV} | Rest]) ->
     end, KV),
     store_sessions(Rest).
 
-check_sessions(_, []) ->
-    ok;
-check_sessions(Nodes, [{ID, KV} | Rest]) ->
-    ok = check_session(Nodes, ID, KV),
-    check_sessions(Nodes, Rest).
+check_sessions_local(Nodes, Sessions) ->
+    check_sessions(get_local, Nodes, Sessions).
 
-check_session(_, _, []) ->
+check_sessions_dist(Nodes, Sessions) ->
+    check_sessions(get, Nodes, Sessions).
+
+check_sessions(_Fun, _, []) ->
     ok;
-check_session(Nodes, ID, [{K, V} | RestKV]) ->
-    lists:foreach(fun
-        (Node) when Node==node() ->
-            V = canister:get(ID, K);
-        (Node) ->
-            V = erpc:call(Node, canister, get, [ID, K])
+check_sessions(Fun, Nodes, [{ID, KV} | Rest]) ->
+    ok = check_session(Fun, Nodes, ID, 1, KV),
+    check_sessions(Fun, Nodes, Rest).
+
+check_session(_, _, _, _, []) ->
+    ok;
+check_session(Fun, Nodes, ID, I, [{K, V} | RestKV]) ->
+    lists:foreach(fun(Node) ->
+        case get_val(Node, Fun, ID, K) of
+            V -> ok;
+            Other ->
+                exit({failed_lookup, [
+                    {node, Node},
+                    {function, Fun},
+                    {iteration,I},
+                    {id, ID},
+                    {key, K},
+                    {expected_value, V},
+                    {returned_value, Other}
+                ]})
+        end
     end, Nodes),
-    check_session(Nodes, ID, RestKV).
+    check_session(Fun, Nodes, ID, I+1, RestKV).
+
+get_val(Node, Fun, ID, K) when Node==node() ->
+    canister:Fun(ID, K);
+get_val(Node, Fun, ID, K) ->
+    erpc:call(Node, canister, Fun, [ID, K]).
+
+
+print_check(Node, Fun, ID, Key, ExpectedVal) ->
+    error_logger:info_msg("Checking (~p) canister:~p(~p, ~p). Expecting: ~p",[Node, Fun, ID, Key, ExpectedVal]).
+
 
 rand_sessions() ->
     rand_sessions(1000).

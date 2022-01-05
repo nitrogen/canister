@@ -10,6 +10,8 @@
     add_many/2,
     is_resyncing/1,
     is_resyncing/0,
+    num_queued/0,
+    num_queued/1,
     resync_loop/1
 ]).
 
@@ -28,6 +30,12 @@
 
 add(ID) ->
     gen_server:cast(?SERVER, {in, ID}).
+
+num_queued(Node) ->
+    gen_server:call({?SERVER, Node}, num_queued).
+
+num_queued() ->
+    gen_server:call(?SERVER, num_queued).
 
 is_resyncing(Node) ->
     gen_server:call({?SERVER, Node}, is_resyncing).
@@ -50,6 +58,9 @@ init([]) ->
     ResyncPid = start_resync_loop(),
     {ok, #state{resync_pid=ResyncPid, queue=queue:new()}}.
 
+handle_call(num_queued, _From, State=#state{queue=Q}) ->
+    Num = queue:len(Q),
+    {reply, Num, State};
 handle_call(is_resyncing, _From, State=#state{resync_pid=Pid}) ->
     Response = is_process_alive(Pid),
     {reply, Response, State};

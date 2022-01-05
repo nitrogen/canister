@@ -114,8 +114,8 @@ handle_cast({update_nodes, NewNodes}, State = #state{}) ->
         [] ->
             canister_log:info("No resync necessary. Node change was only from nodes going offline.");
         NewlyUp ->
-            canister_log:info("New node(s) were added (~p), scheduling a full resync in about 10 seconds", [NewlyUp]),
-            timer:send_after(10000, full_resync)
+            canister_log:info("New node(s) were added (~p), scheduling a full resync in 5 seconds", [NewlyUp]),
+            timer:send_after(5000, full_resync)
     end,
     {noreply, State};
 handle_cast({cast, Msg}, State = #state{}) ->
@@ -224,7 +224,7 @@ refresh_nodes(OrigNodes) ->
 
 which_nodes_are_resyncing(Nodes) ->
     Syncing = ec_plists:filter(fun(Node) ->
-        canister_resync:is_resyncing(Node)
+        canister_resync:is_resyncing(Node) andalso canister_resync:num_queued(Node)>0
     end, Nodes),
     lists:sort(Syncing).
 

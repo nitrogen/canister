@@ -14,7 +14,8 @@
     add_one_node/1,
     add_three_nodes/1,
     no_session/1,
-    no_key/1
+    no_key/1,
+    netsplit/1
 ]).
 
 
@@ -62,11 +63,10 @@ kill_nodes([H|T]) when H==node() ->
 
 all() ->
     [
-        {group, '1'},
-        {group, '2'},
-        {group, '4'}
-%        {group, two},
-%        {group, three}
+%        {group, '1'},
+%        {group, '2'},
+        {group, '3'}
+%        {group, '4'}
     ].
 
 
@@ -77,6 +77,9 @@ groups() ->
         },
         {'2',
             [shuffle], [basic_crud, add_one_node, no_session, no_key]
+        },
+        {'3',
+            [shuffle], [netsplit]
         },
         {'4',
             [shuffle], [basic_crud, add_three_nodes]
@@ -135,20 +138,76 @@ add_x_nodes(Num, Config) ->
     sleep_and_show_sync_status(Nodes2, 1, 30*Num),
     ok = check_sessions_local(Nodes2, Sessions).
 
+netsplit(Config) ->
+    Sessions = rand_sessions(),
+    ok = store_sessions(Sessions),
+    Nodes = proplists:get_value(nodes, Config),
+    [FirstSession,SecondSession|_] = Sessions,
+    {ID1, KV1} = FirstSession,
+    {Key1, _} = hd(KV1),
+    FirstAccess1 = canister:last_access_time(ID1),
+    {ID2, KV2} = SecondSession,
+    {Key2, _} = hd(KV2),
+    FirstUpdate2 = canister:last_update_time(ID2),
+
+    DownNode = lists:last(Nodes),
+    erlang:disconnect_node(DownNode),
+    canister:get(ID1, Key1),
+    NextAccess1 = canister:last_access_time(ID1),
+
+    NewV2 = new_value,
+    FirstUpdate2 = canister:last_update_time(ID2),
+
+    canister:put(ID2, Key2, NewV2),
+    NextUpdate2 = canister:last_update_time(ID2),
+    
+    net_kernel:connect_node(DownNode),
+    sleep_and_show_sync_status(Nodes, 1, 30),
+
+
+    SyncedAccessTime1 = erpc:call(DownNode, canister, last_access_time, [ID1]),
+
+    print_times("Access Times", FirstAccess1, NextAccess1, SyncedAccessTime1),
+
+    SyncedAccessTime1 > FirstAccess1 orelse exit(access_time_unchanged),
+    SyncedAccessTime1 == NextAccess1 orelse exit({access_time_not_synced, [SyncedAccessTime1, NextAccess1]}),
+
+    SyncedUpdateTime2 = erpc:call(DownNode, canister, last_update_time, [ID2]),
+
+    print_times("Update Times", FirstUpdate2, NextUpdate2, SyncedUpdateTime2),
+
+    SyncedUpdateTime2 > FirstUpdate2 orelse exit(update_time_unchanged),
+    SyncedUpdateTime2 == NextUpdate2 orelse exit({update_time_not_synced, [SyncedUpdateTime2, NextUpdate2]}),
+
+    SyncedNewV2 = erpc:call(DownNode, canister, get_local, [ID2, Key2]),
+
+    SyncedNewV2==NewV2 orelse exit(updated_value_not_synced).
+
+
+print_times(Label, Orig, New, OnTargetNode) ->
+    error_logger:info_msg("~s:~nOrig: ~p~nNew: ~p~nPost-resynced on target node: ~p~n", [Label, Orig, New, OnTargetNode]).
+
 sleep_and_show_sync_status(Nodes, Secs, Times) ->
     print_local_sessions(Nodes),
     lists:foreach(fun(X) ->
         io:format("Sleeping ~ps (~p/~p)~n",[Secs, X, Times]),
         timer:sleep(Secs * 1000),
-        print_local_sessions(Nodes)
+        print_local_sessions(Nodes),
+        print_running_resync(Nodes)
     end, lists:seq(1, Times)).
-
         
 
 print_local_sessions(Nodes) ->
     lists:foreach(fun(Node) ->
         N = erpc:call(Node, canister, num_local_sessions, []),
         io:format("Number of Local Session on ~p: ~p~n",[Node, N])
+    end, Nodes).
+
+print_running_resync(Nodes) ->
+    lists:foreach(fun(Node) ->
+        Syncing = canister_resync:is_resyncing(Node),
+        Queued = canister_resync:num_queued(Node),
+        io:format("Node (~p) Resyncing: ~p (~p queued)~n",[Node, Syncing, Queued])
     end, Nodes).
 
 add_new_nodes(NumNodes) ->

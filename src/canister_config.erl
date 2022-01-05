@@ -80,7 +80,7 @@ remote_timeout(New) ->
     set_var(?FUNCTION_NAME, New).
 
 node_interval() ->
-    get_var(?FUNCTION_NAME, 20).
+    get_var(?FUNCTION_NAME, 8).
 
 node_interval(New) ->
     get_var(?FUNCTION_NAME, New).

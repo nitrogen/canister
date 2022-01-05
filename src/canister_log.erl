@@ -8,6 +8,9 @@ info(Msg) ->
     info(Msg, []).
 
 info(Msg, Args) ->
+    Args2 = [node() | Args],
+    FileMsg = lists:flatten(io_lib:format("(Node: ~p) Canister: " ++ Msg ++ "~n", Args2)),
+    file:write_file("canister.log", FileMsg, [append]),
     io:format("Canister: " ++ Msg ++ "~n", Args).
 
 

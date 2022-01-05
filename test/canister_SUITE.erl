@@ -29,8 +29,8 @@ start_node(Num) ->
     Name = list_to_atom("can_" ++ integer_to_list(Num) ++ "@127.0.0.1"),
     Node = Name,
     ct_slave:start(Name, [
-        {boot_timeout, 10},
-        {erl_flags, "-connect_all false -kernel dist_auto_connect never"}
+        {boot_timeout, 10}
+        %{erl_flags, "-connect_all true -kernel dist_auto_connect never"}
     ]),
 
     true = net_kernel:connect_node(Name),
@@ -63,10 +63,10 @@ kill_nodes([H|T]) when H==node() ->
 
 all() ->
     [
-%        {group, '1'},
-%        {group, '2'},
-        {group, '3'}
-%        {group, '4'}
+        %{group, '1'},
+        %{group, '2'},
+        %{group, '3'},
+        {group, '4'}
     ].
 
 
@@ -82,7 +82,9 @@ groups() ->
             [shuffle], [netsplit]
         },
         {'4',
-            [shuffle], [basic_crud, add_three_nodes]
+            [shuffle], [
+                %basic_crud,
+                add_three_nodes]
         }
     ].
 
@@ -91,7 +93,7 @@ group_to_num(Group) ->
     list_to_integer(atom_to_list(Group)).
 
 init_per_group(Group, Config) ->
-    error_logger:info_msg("Master Node: ~p",[node()]),
+    %error_logger:info_msg("Master Node: ~p",[node()]),
     NumNodes = group_to_num(Group),
     Nodes = start_nodes(NumNodes),
     sleep_and_show_sync_status(Nodes, 1, 30),
@@ -181,16 +183,17 @@ netsplit(Config) ->
 
     SyncedNewV2 = erpc:call(DownNode, canister, get_local, [ID2, Key2]),
 
-    SyncedNewV2==NewV2 orelse exit(updated_value_not_synced).
+    SyncedNewV2==NewV2 orelse exit({updated_value_not_synced, [NewV2, SyncedNewV2]}).
 
 
 print_times(Label, Orig, New, OnTargetNode) ->
-    error_logger:info_msg("~s:~nOrig: ~p~nNew: ~p~nPost-resynced on target node: ~p~n", [Label, Orig, New, OnTargetNode]).
+    canister_log:info("~s:~nOrig: ~p~nNew: ~p~nPost-resynced on target node: ~p", [Label, Orig, New, OnTargetNode]).
 
 sleep_and_show_sync_status(Nodes, Secs, Times) ->
     print_local_sessions(Nodes),
+    print_running_resync(Nodes),
     lists:foreach(fun(X) ->
-        io:format("Sleeping ~ps (~p/~p)~n",[Secs, X, Times]),
+        canister_log:info("Sleeping ~ps (~p/~p)~n",[Secs, X, Times]),
         timer:sleep(Secs * 1000),
         print_local_sessions(Nodes),
         print_running_resync(Nodes)
@@ -200,14 +203,14 @@ sleep_and_show_sync_status(Nodes, Secs, Times) ->
 print_local_sessions(Nodes) ->
     lists:foreach(fun(Node) ->
         N = erpc:call(Node, canister, num_local_sessions, []),
-        io:format("Number of Local Session on ~p: ~p~n",[Node, N])
+        canister_log:info("Number of Local Session on ~p: ~p",[Node, N])
     end, Nodes).
 
 print_running_resync(Nodes) ->
     lists:foreach(fun(Node) ->
         Syncing = canister_resync:is_resyncing(Node),
         Queued = canister_resync:num_queued(Node),
-        io:format("Node (~p) Resyncing: ~p (~p queued)~n",[Node, Syncing, Queued])
+        canister_log:info("Node (~p) Resyncing: ~p (~p queued)",[Node, Syncing, Queued])
     end, Nodes).
 
 add_new_nodes(NumNodes) ->
@@ -231,6 +234,11 @@ check_sessions_dist(Nodes, Sessions) ->
 check_sessions(_Fun, _, []) ->
     ok;
 check_sessions(Fun, Nodes, [{ID, KV} | Rest]) ->
+    NumLeft = length(Rest),
+    case NumLeft rem 100 of
+        0 -> canister_log:info("~p Session Checks Remaining",[NumLeft]);
+        _ -> ok
+    end,
     ok = check_session(Fun, Nodes, ID, 1, KV),
     check_sessions(Fun, Nodes, Rest).
 
@@ -265,14 +273,14 @@ print_check(Node, Fun, ID, Key, ExpectedVal) ->
 
 
 rand_sessions() ->
-    rand_sessions(1000).
+    rand_sessions(10000).
 
 rand_sessions(Num) ->
     lists:map(fun(_) ->
-        ID = crypto:strong_rand_bytes(32),
-        NumKeys = rand:uniform(20),
+        ID = crypto:strong_rand_bytes(16),
+        NumKeys = rand:uniform(4),
         KV = lists:map(fun(_) ->
-            RandKey = crypto:strong_rand_bytes(16),
+            RandKey = crypto:strong_rand_bytes(8),
             RandVal = rand_value(),
             {RandKey, RandVal}
         end, lists:seq(1, NumKeys)),
@@ -286,10 +294,10 @@ rand_value() ->
 rand_value(1) -> %% integer
     rand:uniform(1000000000000000000000000000000);
 rand_value(2) ->  %% binary
-    crypto:strong_rand_bytes(rand:uniform(1000));
+    crypto:strong_rand_bytes(rand:uniform(20));
 rand_value(3) -> %% list
-    lists:seq(1, rand:uniform(1000));
+    lists:seq(1, rand:uniform(20));
 rand_value(4) -> %% tuple
-    list_to_tuple(lists:seq(1, rand:uniform(1000)));
+    list_to_tuple(lists:seq(1, rand:uniform(20)));
 rand_value(5) -> %% mixed item
     {rand_value(1), rand_value(2), rand_value(3), rand_value(4)}.

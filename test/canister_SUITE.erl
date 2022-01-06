@@ -63,9 +63,9 @@ kill_nodes([H|T]) when H==node() ->
 
 all() ->
     [
-        %{group, '1'},
-        %{group, '2'},
-        %{group, '3'},
+        {group, '1'},
+        {group, '2'},
+        {group, '3'},
         {group, '4'}
     ].
 

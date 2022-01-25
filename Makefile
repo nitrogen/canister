@@ -16,5 +16,8 @@ run3:
 run4:
 	rebar3 shell --name can_4@127.0.0.1
 
-make test:
+test:
 	rebar3 ct --name can_1@127.0.0.1
+
+publish:
+	rebar3 hex publish

@@ -11,7 +11,9 @@
   {included_applications, [
     mnesia
   ]},
-  {env,[]},
+  {env,[
+    {mnesia_table_copies, disc}
+  ]},
   {modules, []},
 
   {licenses, ["MIT"]},

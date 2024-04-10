@@ -8,6 +8,7 @@
     send_update/2,
     send_update/3,
     send_clear/2,
+    send_delete/1,
     send_touch/2,
     get_nodes/0,
     get_node_to_resync/0
@@ -51,6 +52,9 @@ send_clear(ID, Time) ->
 
 send_touch(ID, Time) ->
     gen_server:cast(?SERVER, {cast, {touch, ID, Time}}).
+
+send_delete(ID) ->
+    gen_server:cast(?SERVER, {cast, {delete, ID}}).
 
 init([]) ->
     ok = init_ets(),
@@ -176,6 +180,9 @@ handle_remote({touch, ID, Time}) ->
     ok;
 handle_remote({clear, ID, Time}) ->
     canister:clear(ID, Time),
+    ok;
+handle_remote({delete, ID}) ->
+    canister:delete(ID),
     ok.
 
 assemble_and_requeue(Nodes) ->
@@ -199,8 +206,6 @@ assemble_and_requeue(Nodes) ->
 get_node_to_resync() ->
     get_node_to_resync([node() | get_nodes()]).
 
-get_node_to_resync([]) ->
-    undefined;
 get_node_to_resync(Nodes) ->
     case which_nodes_are_resyncing(Nodes) of
         [] -> hd(Nodes);

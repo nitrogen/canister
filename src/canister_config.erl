@@ -30,12 +30,8 @@ summarize() ->
     Msgs = [format_config(Field) || Field <- Fields],
     Nodes = default_cluster(),
     ClusterMsg = format_cluster(Nodes),
-    Msg = [
-        "Nitrogen Canister Session Manager Configuration:\n",
-        ClusterMsg,
-        Msgs
-    ],
-    io:format(Msg).
+    MsgHeader = "Nitrogen Canister Session Manager Configuration:\n~s~s",
+    io:format(MsgHeader, [ClusterMsg, Msgs]).
 
 format_cluster([]) ->
     "*** Canister: No auto-connected cluster nodes (default_cluster) configured. You'll have to manually connect nodes (net_kernel:connect_node(Node))\n";

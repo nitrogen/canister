@@ -61,13 +61,16 @@ See [canister.config](https://github.com/nitrogen/canister/blob/master/src/canis
 
 ## Changelog
 
+### 0.1.2
+
+- Fix some warnings
+- Add Github Actions testing
+
 ### 0.1.1
 
-- Fix some Warnings
 - Improve some backwards compatibility with rebar2
 - Switch `canister_log` to use `logger`
 - Improve the build process a bit
-- Add github actions testing
 
 ### 0.1.0
 

@@ -25,7 +25,7 @@
     queue_delete/2,
     record_status/1
 ]).
--compile(nowarn_export_all).t 
+-compile(nowarn_export_all).
 -compile(export_all).
 
 

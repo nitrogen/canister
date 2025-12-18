@@ -12,6 +12,7 @@
     get_local/2,
     get_data/1,
     put/3,
+    update/3,
     touch/1,
     touch/2,
     touch_local/1,
@@ -20,8 +21,11 @@
     last_access_time/1,
     deleted_time/1,
     clear_untouched_sessions/0,
-    delete_deleted_sessions/0
+    delete_deleted_sessions/0,
+    queue_delete/2,
+    record_status/1
 ]).
+-compile(nowarn_export_all).t 
 -compile(export_all).
 
 
@@ -311,7 +315,7 @@ update_access_time(ID, Time) ->
     end).
          
 list_untouched_sessions() ->
-    Timeout = canister_config:session_timeout(),
+    Timeout = ?SESSION_TIMEOUT,
     EffectiveTimeout = Timeout + ?GRACE_PERIOD,
     LastAccessedToExpire = qdate:to_now(qdate:add_minutes(-EffectiveTimeout)),
     Query = fun() ->

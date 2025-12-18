@@ -67,6 +67,7 @@ See [canister.config](https://github.com/nitrogen/canister/blob/master/src/canis
 - Improve some backwards compatibility with rebar2
 - Switch `canister_log` to use `logger`
 - Improve the build process a bit
+- Add github actions testing
 
 ### 0.1.0
 

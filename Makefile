@@ -17,7 +17,10 @@ run4:
 	rebar3 shell --name can_4@127.0.0.1
 
 test:
-	rebar3 ct --name can_1@127.0.0.1
+	rebar3 ct --name can_ct_main@127.0.0.1
+
+dialyzer:
+	rebar3 dialyzer
 
 publish:
 	rebar3 hex publish

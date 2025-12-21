@@ -199,8 +199,6 @@ assemble_and_requeue(Nodes) ->
 get_node_to_resync() ->
     get_node_to_resync([node() | get_nodes()]).
 
-get_node_to_resync([]) ->
-    undefined;
 get_node_to_resync(Nodes) ->
     case which_nodes_are_resyncing(Nodes) of
         [] -> hd(Nodes);

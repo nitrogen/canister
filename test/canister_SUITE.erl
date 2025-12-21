@@ -18,22 +18,23 @@
     netsplit/1
 ]).
 
-
 start_nodes(NumNodes) ->
     [start_node(Num) || Num <- lists:seq(1, NumNodes)].
 
 start_node(1) ->
     application:ensure_all_started(canister),
-    node();
-start_node(Num) ->
-    Name = list_to_atom("can_" ++ integer_to_list(Num) ++ "@127.0.0.1"),
-    Node = Name,
-    ct_slave:start(Name, [
-        {boot_timeout, 10}
-        %{erl_flags, "-connect_all true -kernel dist_auto_connect never"}
-    ]),
+    {undefined, node()};
+start_node(_) ->
+    Opts = #{
+        wait_boot => 5000,
+        name => peer:random_name(),
+        host => "127.0.0.1"
+    },
+    {ok, Peer, Node} = ?CT_PEER(Opts),
+    unlink(Peer),
+    io:format("Peer: ~p. Node: ~p~n",[Peer, Node]),
 
-    true = net_kernel:connect_node(Name),
+    true = net_kernel:connect_node(Node),
 
     CodePath = lists:filter(fun(Path) ->
         nomatch =:= string:find(Path, "rebar3")
@@ -41,24 +42,30 @@ start_node(Num) ->
     true = rpc:call(Node, code, set_path, [CodePath]),
 
     {ok, _} = erpc:call(Node, application, ensure_all_started, [canister]),
-    Node.
+    {Peer, Node}.
 
-start_unconnected(Num) ->
-    Node = start_unconnected(Num),
-    erlang:disconnect_node(Node),
-    Node.
+%start_unconnected(Num) ->
+%    Node = start_unconnected(Num),
+%    erlang:disconnect_node(Node),
+%    Node.
 
-kill_nodes([]) ->
-    [];
-kill_nodes([H|T]) when H=/=node() ->
-    {ok, _} = ct_slave:stop(H),
-    kill_nodes(T);
-kill_nodes([H|T]) when H==node() ->
-    %mnesia:delete_table(canister
+kill_peers([undefined|T]) ->
     application:stop(canister),
-    %stopped = mnesia:stop(),
-    %mnesia:delete_schema(canister),
-    kill_nodes(T).
+    kill_peers(T);
+kill_peers([H|T]) ->
+    peer:stop(H),
+    kill_peers(T);
+kill_peers([]) ->
+    ok.
+%    if Peer == undefined, this is the  current node, just stop canister
+%    [peer:stop(Peer) || Peer <- Peers].
+%%    {ok, _} = ct_slave:stop(H),
+%%    kill_peers(T).
+%kill_peers([H|T]) when H==node() ->
+%    %mnesia:delete_table(canister
+%    %stopped = mnesia:stop(),
+%    %mnesia:delete_schema(canister),
+%    kill_peers(T).
 
 
 all() ->
@@ -95,13 +102,14 @@ group_to_num(Group) ->
 init_per_group(Group, Config) ->
     %error_logger:info_msg("Master Node: ~p",[node()]),
     NumNodes = group_to_num(Group),
-    Nodes = start_nodes(NumNodes),
+    PeerNodes = start_nodes(NumNodes),
+    {Peers, Nodes} = lists:unzip(PeerNodes),
     sleep_and_show_sync_status(Nodes, 1, 30),
-    [{nodes, Nodes} | Config].
+    [{peer_nodes, PeerNodes}, {nodes, Nodes}, {peers, Peers} | Config].
 
 end_per_group(_Group, Config) ->
-    Nodes = nodes() ++ [node()], %proplists:get_value(nodes, Config),
-    kill_nodes(Nodes),
+    Peers = proplists:get_value(peers, Config),
+    kill_peers(Peers),
     Config.
 
 no_session(_Config) ->
@@ -135,7 +143,8 @@ add_x_nodes(Num, Config) ->
     Sessions = rand_sessions(),
     ok = store_sessions(Sessions),
     Nodes = proplists:get_value(nodes, Config),
-    NewNodes = add_new_nodes(Num),
+    PeerNodes = add_new_nodes(Num),
+    {_Peers, NewNodes} = lists:unzip(PeerNodes),
     Nodes2 = Nodes ++ NewNodes,
     sleep_and_show_sync_status(Nodes2, 1, 30*Num),
     ok = check_sessions_local(Nodes2, Sessions).
@@ -162,7 +171,7 @@ netsplit(Config) ->
 
     canister:put(ID2, Key2, NewV2),
     NextUpdate2 = canister:last_update_time(ID2),
-    
+
     net_kernel:connect_node(DownNode),
     sleep_and_show_sync_status(Nodes, 1, 30),
 
@@ -198,7 +207,6 @@ sleep_and_show_sync_status(Nodes, Secs, Times) ->
         print_local_sessions(Nodes),
         print_running_resync(Nodes)
     end, lists:seq(1, Times)).
-        
 
 print_local_sessions(Nodes) ->
     lists:foreach(fun(Node) ->

@@ -30,11 +30,11 @@ summarize() ->
     Msgs = [format_config(Field) || Field <- Fields],
     Nodes = default_cluster(),
     ClusterMsg = format_cluster(Nodes),
-    Msg = [
+    Msg = lists:flatten([
         "Nitrogen Canister Session Manager Configuration:\n",
         ClusterMsg,
         Msgs
-    ],
+    ]),
     io:format(Msg).
 
 format_cluster([]) ->

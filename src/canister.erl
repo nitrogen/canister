@@ -238,7 +238,7 @@ touch_local(ID, Time) ->
     update_access_time(ID, Time).
 
 queue_delete(ID, Time) ->
-    canister_sync:send_delete(ID, Time).
+    canister_sync:send_clear(ID, Time).
 
 record_status(ID) ->
     case deleted_time(ID) of
@@ -252,7 +252,6 @@ record_status(ID) ->
         Time ->
         {deleted, Time, 0}
     end.
-            
 
 update_update_time(ID) ->
     update_update_time(ID, os:timestamp()).
@@ -313,7 +312,7 @@ update_access_time(ID, Time) ->
                 ok
         end
     end).
-         
+
 list_untouched_sessions() ->
     Timeout = ?SESSION_TIMEOUT,
     EffectiveTimeout = Timeout + ?GRACE_PERIOD,
@@ -334,7 +333,9 @@ clear_untouched_sessions() ->
     SessionsToSync = lists:filtermap(fun(Sess) ->
         case clear_untouched_session(Sess) of
             ok -> false;
-            {resync, _Node} -> {true, Sess#canister_times.id}
+            {resync, _Node} ->
+                {ID, _} = Sess,
+                {true, ID}
         end
     end, Sessions),
     lists:foreach(fun(ID) ->
@@ -347,7 +348,7 @@ clear_untouched_session({ID, LastAccess}) ->
     case latest_cluster_access_time(ID, LastAccess) of
         ok ->
             clear(ID);
-        {ok, LastAccess, Node} ->
+        {ok, _LastAccess, Node} ->
             {resync, Node}
     end.
 
@@ -376,7 +377,7 @@ latest_cluster_time(Type, ID, LastAccess) ->
             case compare_latest_node_time(Nodes, Type, ID, LastAccess) of
                 ok ->
                     ok;
-                {Node, NewLastAccess} ->
+                {ok, Node, NewLastAccess} ->
                     {ok, NewLastAccess, Node}
             end
     end.

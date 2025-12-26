@@ -36,7 +36,7 @@ jobs:
       - name: Tests
         run: make test
 
-      #- name: Run Dialyzer
-      #  run: make dialyzer
+      - name: Run Dialyzer
+        run: make dialyzer
 
 

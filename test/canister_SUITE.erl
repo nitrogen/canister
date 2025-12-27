@@ -18,9 +18,6 @@
     netsplit/1
 ]).
 
-%Rework this whole module to use peer:start(#{connection=>standard_io})
-%Look at this: https://max-au.com/2022/01/06/peer/
-
 start_nodes(NumNodes) ->
     [start_node(Num) || Num <- lists:seq(1, NumNodes)].
 
@@ -35,40 +32,19 @@ start_node(_) ->
     unlink(Peer),
     io:format("Peer: ~p. Node: ~p~n",[Peer, Node]),
 
-    %true = net_kernel:connect_node(Node),
-
     CodePath = lists:filter(fun(Path) ->
         nomatch =:= string:find(Path, "rebar3")
     end, code:get_path()),
-    %peer:
     true = peer:call(Peer, code, set_path, [CodePath]),
 
-    %{ok, _} = erpc:call(Node, application, ensure_all_started, [canister]),
     {ok, _} = peer:call(Peer, application, ensure_all_started, [canister]),
     {Peer, Node}.
 
-%start_unconnected(Num) ->
-%    Node = start_unconnected(Num),
-%    erlang:disconnect_node(Node),
-%    Node.
-
-%kill_peers([undefined|T]) ->
-%    application:stop(canister),
-%    kill_peers(T);
 kill_peers([H|T]) ->
     peer:stop(H),
     kill_peers(T);
 kill_peers([]) ->
     ok.
-%    if Peer == undefined, this is the  current node, just stop canister
-%    [peer:stop(Peer) || Peer <- Peers].
-%%    {ok, _} = ct_slave:stop(H),
-%%    kill_peers(T).
-%kill_peers([H|T]) when H==node() ->
-%    %mnesia:delete_table(canister
-%    %stopped = mnesia:stop(),
-%    %mnesia:delete_schema(canister),
-%    kill_peers(T).
 
 
 all() ->
@@ -112,7 +88,6 @@ group_to_num(Group) ->
     list_to_integer(atom_to_list(Group)).
 
 init_per_group(Group, Config) ->
-    %error_logger:info_msg("Master Node: ~p",[node()]),
     NumNodes = group_to_num(Group),
     PeerNodes = start_nodes(NumNodes),
     {Peers, Nodes} = lists:unzip(PeerNodes),
@@ -140,7 +115,6 @@ no_session(Config) ->
     ID = crypto:strong_rand_bytes(50),
     Key = crypto:strong_rand_bytes(50),
     undefined = exec_peer(Config, canister, get, [ID, Key]).
-    %undefined = canister:get(ID, Key).
 
 no_key(Config) ->
     Sessions = rand_sessions(1),
@@ -148,7 +122,6 @@ no_key(Config) ->
     [{ID, _}] = Sessions,
     Key = crypto:strong_rand_bytes(50),
     undefined = exec_peer(Config, canister, get, [ID, Key]).
-    %undefined = canister:get(ID, Key).
 
 basic_crud(Config) ->
     Sessions = rand_sessions(),
@@ -190,34 +163,24 @@ netsplit(Config) ->
     {Key1, _} = hd(KV1),
 
     FirstAccess1 = exec_first(Config, canister, last_access_time, [ID1]),
-    %FirstAccess1 = canister:last_access_time(ID1),
     {ID2, KV2} = SecondSession,
     {Key2, _} = hd(KV2),
     FirstUpdate2 = exec_first(Config, canister, last_update_time, [ID2]),
-    %FirstUpdate2 = canister:last_update_time(ID2),
 
 
     DownNode = lists:last(Nodes),
     exec_first(Config, erlang, disconnect_node, [DownNode]),
-    %erlang:disconnect_node(DownNode),
     exec_first(Config, canister, get, [ID1, Key1]),
-    %canister:get(ID1, Key1),
     NextAccess1 = exec_first(Config, canister, last_access_time, [ID1]),
-    %NextAccess1 = canister:last_access_time(ID1),
 
     NewV2 = new_value,
     FirstUpdate2 = exec_first(Config, canister, last_update_time, [ID2]),
-    %FirstUpdate2 = canister:last_update_time(ID2),
 
-    %canister:put(ID2, Key2, NewV2),
     exec_first(Config, canister, put, [ID2, Key2, NewV2]),
 
-    %NextUpdate2 = canister:last_update_time(ID2),
     NextUpdate2 = exec_first(Config, canister, last_update_time,[ID2]),
 
     exec_first(Config, net_kernel, connect_node, [DownNode]),
-    %net_kernel:connect_node(DownNode),
-    %
     sleep_and_show_sync_status(Peers, Nodes, 1, 30),
 
 
@@ -264,9 +227,7 @@ print_local_sessions(Peers) ->
 print_running_resync(Nodes, [Peer|_]) ->
     lists:foreach(fun(Node) ->
         Syncing = peer:call(Peer, canister_resync, is_resyncing, [Node]),
-        %Syncing = canister_resync:is_resyncing(Node),
         Queued = peer:call(Peer, canister_resync, num_queued, [Node]),
-        %Queued = canister_resync:num_queued(Node),
         canister_log:info("Node (~p) Resyncing: ~p (~p queued)",[Node, Syncing, Queued])
     end, Nodes).
 
@@ -320,11 +281,8 @@ check_session(Fun, Peers, ID, I, [{K, V} | RestKV]) ->
     end, Peers),
     check_session(Fun, Peers, ID, I+1, RestKV).
 
-%get_val(Peer, Fun, ID, K) when Node==node() ->
-%    canister:Fun(ID, K);
 get_val(Peer, Fun, ID, K) ->
     peer:call(Peer, canister, Fun, [ID, K]).
-    %erpc:call(Node, canister, Fun, [ID, K]).
 
 
 print_check(Node, Fun, ID, Key, ExpectedVal) ->

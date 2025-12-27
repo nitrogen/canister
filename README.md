@@ -61,6 +61,10 @@ See [canister.config](https://github.com/nitrogen/canister/blob/master/src/canis
 
 ## Changelog
 
+### 0.1.3
+
+- Rebuild the test suite using `peer` instead of `ct_slave` (`ct_slave` goes away in OTP 29)
+
 ### 0.1.2
 
 - Fix some warnings

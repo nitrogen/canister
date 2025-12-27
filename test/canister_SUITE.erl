@@ -83,10 +83,19 @@ all() ->
 groups() ->
     [
         {'1',
-            [shuffle], [no_session, no_key, basic_crud]
+            [shuffle], [
+                no_session,
+                no_key,
+                basic_crud
+            ]
         },
         {'2',
-            [shuffle], [basic_crud, add_one_node, no_session, no_key]
+            [shuffle], [
+                basic_crud,
+                add_one_node,
+                no_session,
+                no_key
+            ]
         },
         {'3',
             [shuffle], [netsplit]
@@ -107,8 +116,20 @@ init_per_group(Group, Config) ->
     NumNodes = group_to_num(Group),
     PeerNodes = start_nodes(NumNodes),
     {Peers, Nodes} = lists:unzip(PeerNodes),
+    io:format("Connecting Nodes: ~p~n", [Nodes]),
+    connect_nodes(Peers, Nodes),
+
+    io:format("Waiting for sync status~n"),
     sleep_and_show_sync_status(Peers, Nodes, 1, 30),
     [{peer_nodes, PeerNodes}, {nodes, Nodes}, {peers, Peers} | Config].
+
+connect_nodes(_, [_]) ->
+    ok;
+connect_nodes([Peer|_], Nodes) ->
+    lists:foreach(fun(Node) ->
+        io:format("Connecting to: ~p~n", [Node]),
+        true = peer:call(Peer, net_kernel, connect_node, [Node])
+    end, Nodes).
 
 end_per_group(_Group, Config) ->
     Peers = proplists:get_value(peers, Config),
@@ -155,6 +176,7 @@ add_x_nodes(Num, Config) ->
     {NewPeers, NewNodes} = lists:unzip(PeerNodes),
     Nodes2 = Nodes ++ NewNodes,
     Peers2 = Peers ++ NewPeers,
+    connect_nodes(Peers2, Nodes2),
     sleep_and_show_sync_status(Peers2, Nodes2, 1, 30*Num),
     ok = check_sessions_local(Peers2, Sessions).
 
@@ -256,7 +278,7 @@ store_sessions(_Config, []) ->
     ok;
 store_sessions(Config, [{ID, KV} | Rest]) ->
     lists:foreach(fun({Key, Val}) ->
-        undefined = exec_peer(Config, canister, put, [ID, Key, Val])
+        undefined = exec_first(Config, canister, put, [ID, Key, Val])
     end, KV),
     store_sessions(Config, Rest).
 
@@ -286,6 +308,7 @@ check_session(Fun, Peers, ID, I, [{K, V} | RestKV]) ->
             Other ->
                 exit({failed_lookup, [
                     {peer, Peer},
+                    {peers, Peers},
                     {function, Fun},
                     {iteration,I},
                     {id, ID},

@@ -49,8 +49,12 @@ init_tables() ->
     init_table(canister_times, record_info(fields, canister_times)).
 
 init_table(Table, Fields) ->
+    MnesiaCopies = case application:get_env(canister, mnesia_table_copies, disc) of
+        disc -> disc_copies;
+        ram -> ram_copies
+    end,
     Res = mnesia:create_table(Table, [
-        {disc_copies, [node()]},
+        {MnesiaCopies, [node()]},
         {attributes, Fields}
     ]),
     canister_log:info("Initializing Table: ~p: ~p",[Table, Res]),
